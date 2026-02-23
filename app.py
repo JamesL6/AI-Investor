@@ -17,6 +17,7 @@ from src.data import get_financial_data, FinancialData, format_currency
 from src.analyzer import GrahamValidator, InvestorType, AnalysisResult
 from src.agent import get_llm_verdict, get_contrarian_analysis
 from src.models import AVAILABLE_MODELS, get_model_choices
+from src.indices import INDEX_CONFIGS
 
 # Page configuration
 st.set_page_config(
@@ -175,7 +176,55 @@ def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str, inclu
     return result
 
 
-def display_stock_result(result: dict, index: int):
+def analyze_stock_no_ai(ticker: str, investor_type: InvestorType) -> dict:
+    """
+    Phase 1 of index mode: fetch data and score criteria only — no AI call.
+    Fast enough to run on hundreds of stocks in parallel.
+    """
+    import time
+
+    result = {
+        "ticker": ticker,
+        "success": False,
+        "data": None,
+        "analysis": None,
+        "verdict": None,
+        "contrarian_devil": None,
+        "contrarian_skeptic": None,
+        "error": None,
+        "fetch_time": 0,
+        "analysis_time": 0,
+        "ai_time": 0,
+    }
+
+    try:
+        start_fetch = time.time()
+        data = get_financial_data(ticker)
+        result["fetch_time"] = time.time() - start_fetch
+
+        if not data or data.total_revenue <= 0 or data.current_price <= 0:
+            result["error"] = f"Could not fetch valid data for {ticker}"
+            return result
+
+        result["data"] = data
+
+        start_analysis = time.time()
+        validator = GrahamValidator(data)
+        analysis = validator.analyze(investor_type)
+        result["analysis"] = analysis
+        result["analysis_time"] = time.time() - start_analysis
+        result["success"] = True
+
+        print(f"[{ticker}] Score: {analysis.passed_count}/{analysis.total_count} ({analysis.score_percentage:.0f}%)")
+
+    except Exception as e:
+        result["error"] = f"Error analyzing {ticker}: {str(e)}"
+        print(f"[{ticker}] Error: {str(e)}")
+
+    return result
+
+
+def display_stock_result(result: dict, index: int, expand_verdict: bool = True):
     """Display results for a single stock."""
     ticker = result["ticker"]
     
@@ -233,7 +282,7 @@ def display_stock_result(result: dict, index: int):
     
     # AI Verdict - dynamic title based on investor type
     analyst_name = "Warren Buffett" if analysis.investor_type == InvestorType.BUFFETT else "Benjamin Graham"
-    with st.expander(f"📜 {analyst_name}'s Verdict", expanded=True):
+    with st.expander(f"📜 {analyst_name}'s Verdict", expanded=expand_verdict):
         st.markdown(result["verdict"])
     
     # Contrarian expanders (only shown if contrarian analysis was generated)
@@ -362,160 +411,276 @@ def main():
         )
     
     # Main content area
-    st.header("📝 Enter Stocks to Analyze")
-    
-    st.markdown("""
-    Enter stock tickers below, **one per line**. Each stock will be numbered and analyzed.
-    """)
-    
-    # Stock input
-    stock_input = st.text_area(
-        "Stock Tickers",
-        placeholder="AAPL\nJNJ\nKO\nWMT\nBRK-B",
-        height=200,
-        help="Enter one ticker per line. Examples: AAPL, JNJ, MSFT, etc."
+    st.header("📝 Stock Selection")
+
+    input_mode = st.radio(
+        "Input method",
+        ["✏️ Enter tickers manually", "📊 Select an index"],
+        horizontal=True,
+        label_visibility="collapsed"
     )
-    
-    # Parse stocks
-    if stock_input.strip():
-        lines = [line.strip().upper() for line in stock_input.strip().split('\n') if line.strip()]
-        stocks = list(dict.fromkeys(lines))  # Remove duplicates while preserving order
-        
-        # Display parsed stocks
-        st.markdown("**Stocks to analyze:**")
-        for i, stock in enumerate(stocks, 1):
-            st.markdown(f"`{i}.` **{stock}**")
-    else:
-        stocks = []
-    
+
+    stocks = []
+    is_index_mode = False
+    selected_index_name = None
+
+    if input_mode == "✏️ Enter tickers manually":
+        st.markdown("Enter stock tickers below, **one per line**.")
+        stock_input = st.text_area(
+            "Stock Tickers",
+            placeholder="AAPL\nJNJ\nKO\nWMT\nBRK-B",
+            height=200,
+            help="Enter one ticker per line. Examples: AAPL, JNJ, MSFT, etc."
+        )
+        if stock_input.strip():
+            lines = [line.strip().upper() for line in stock_input.strip().split('\n') if line.strip()]
+            stocks = list(dict.fromkeys(lines))
+            st.markdown("**Stocks to analyze:**")
+            for i, stock in enumerate(stocks, 1):
+                st.markdown(f"`{i}.` **{stock}**")
+
+    else:  # Index mode
+        is_index_mode = True
+        selected_index_name = st.selectbox(
+            "Choose Index",
+            list(INDEX_CONFIGS.keys()),
+            help="Tickers are fetched automatically from Wikipedia when you run the analysis."
+        )
+        config = INDEX_CONFIGS[selected_index_name]
+        est_phase1 = max(1, config["est_minutes"] // 2)
+        st.info(
+            f"**{selected_index_name}** — {config['description']}  \n"
+            f"- Phase 1 (data + scoring, ~{config['count']} stocks): ~{est_phase1} min  \n"
+            f"- Phase 2 (AI verdicts for all stocks): ~{config['est_minutes']} min total  \n"
+            f"Results are ranked **best → worst** by score. Contrarian analysis is disabled in index mode."
+        )
+
     # Analyze button
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         analyze_button = st.button(
             "🚀 Run Analysis",
             type="primary",
-            disabled=len(stocks) == 0,
+            disabled=(len(stocks) == 0 and not is_index_mode),
             use_container_width=True
         )
-    
-    # Run analysis
-    if analyze_button and stocks:
+
+    # =========================================================================
+    # RUN ANALYSIS
+    # =========================================================================
+    if analyze_button and (stocks or is_index_mode):
         st.markdown("---")
         st.header("📊 Analysis Results")
-        
-        # Progress tracking
-        progress_bar = st.progress(0, text="Starting analysis...")
-        status_text = st.empty()
-        
-        results = []
         start_time = time.time()
-        
-        # Show which stocks are being analyzed
-        status_text.info(f"🔄 Analyzing {len(stocks)} stock(s): {', '.join(stocks)}")
-        
-        # Parallel analysis
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_ticker = {
-                executor.submit(analyze_stock, ticker, investor_type, selected_model, include_contrarian): ticker 
-                for ticker in stocks
-            }
-            
-            # Collect results as they complete
-            completed = 0
-            for future in concurrent.futures.as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                completed += 1
-                progress = completed / len(stocks)
-                progress_bar.progress(progress, text=f"Completed {ticker} ({completed}/{len(stocks)})")
-                
-                try:
-                    result = future.result()
-                    results.append(result)
-                    
-                    # Log result
-                    if result["success"]:
-                        total_time = result.get("fetch_time", 0) + result.get("analysis_time", 0) + result.get("ai_time", 0)
-                        print(f"UI: {ticker} completed successfully in {total_time:.1f}s")
-                    else:
-                        print(f"UI: {ticker} failed - {result.get('error', 'Unknown error')}")
-                except Exception as e:
-                    print(f"UI: {ticker} exception - {str(e)}")
-                    results.append({
-                        "ticker": ticker,
-                        "success": False,
-                        "error": str(e)
-                    })
-        
-        elapsed = time.time() - start_time
-        progress_bar.progress(1.0, text=f"✅ Analysis complete! ({elapsed:.1f}s)")
-        
-        # Show final summary
-        successful = sum(1 for r in results if r["success"])
-        status_text.success(f"✅ Completed: {successful}/{len(stocks)} stocks analyzed successfully in {elapsed:.1f}s")
-        
-        # Sort results by original order
-        ticker_order = {t: i for i, t in enumerate(stocks)}
-        results.sort(key=lambda r: ticker_order.get(r["ticker"], 999))
-        
-        # Display results
+        results = []
+
+        # ---- INDEX MODE: Two-phase ----
+        if is_index_mode:
+            # Load tickers
+            with st.spinner(f"Loading {selected_index_name} tickers from Wikipedia..."):
+                stocks = INDEX_CONFIGS[selected_index_name]["tickers_fn"]()
+
+            if not stocks:
+                st.error(
+                    f"Failed to load {selected_index_name} tickers. "
+                    "Check internet connection and try again."
+                )
+                st.stop()
+
+            st.markdown(f"**{len(stocks)} tickers loaded.** Running two-phase analysis...")
+
+            # -- Phase 1: Data fetch + criteria scoring (no AI) --
+            phase1_bar = st.progress(0, text=f"Phase 1 of 2: Scoring {len(stocks)} stocks (no AI)...")
+            phase1_status = st.empty()
+            phase1_results = []
+            phase1_start = time.time()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(analyze_stock_no_ai, ticker, investor_type): ticker
+                    for ticker in stocks
+                }
+                p1_done = 0
+                for future in concurrent.futures.as_completed(futures):
+                    ticker = futures[future]
+                    p1_done += 1
+                    phase1_bar.progress(
+                        p1_done / len(stocks),
+                        text=f"Phase 1 of 2: Scored {p1_done}/{len(stocks)} stocks..."
+                    )
+                    try:
+                        phase1_results.append(future.result())
+                    except Exception as e:
+                        phase1_results.append({
+                            "ticker": ticker, "success": False, "error": str(e),
+                            "data": None, "analysis": None, "verdict": None,
+                            "contrarian_devil": None, "contrarian_skeptic": None,
+                            "fetch_time": 0, "analysis_time": 0, "ai_time": 0
+                        })
+
+            phase1_elapsed = time.time() - phase1_start
+            successful_p1 = [r for r in phase1_results if r["success"]]
+            failed_p1 = [r for r in phase1_results if not r["success"]]
+
+            # Sort successful results by score descending before Phase 2
+            successful_p1.sort(key=lambda r: r["analysis"].score_percentage, reverse=True)
+
+            phase1_status.info(
+                f"Phase 1 complete: {len(successful_p1)}/{len(stocks)} stocks scored "
+                f"in {phase1_elapsed:.0f}s. Generating AI verdicts..."
+            )
+
+            # -- Phase 2: AI verdicts for ALL successful stocks --
+            phase2_bar = st.progress(
+                0, text=f"Phase 2 of 2: Generating AI verdicts for {len(successful_p1)} stocks..."
+            )
+            phase2_start = time.time()
+            verdict_map = {}
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                verdict_futures = {
+                    executor.submit(get_llm_verdict, r["analysis"], selected_model): r["ticker"]
+                    for r in successful_p1
+                }
+                p2_done = 0
+                for future in concurrent.futures.as_completed(verdict_futures):
+                    ticker = verdict_futures[future]
+                    p2_done += 1
+                    phase2_bar.progress(
+                        p2_done / len(successful_p1),
+                        text=f"Phase 2 of 2: AI verdicts {p2_done}/{len(successful_p1)}..."
+                    )
+                    try:
+                        verdict_map[ticker] = future.result()
+                    except Exception as e:
+                        verdict_map[ticker] = f"AI verdict unavailable: {str(e)}"
+
+            # Merge verdicts into Phase 1 results
+            for r in successful_p1:
+                r["verdict"] = verdict_map.get(r["ticker"], "Verdict not generated")
+
+            phase2_elapsed = time.time() - phase2_start
+            total_elapsed = time.time() - start_time
+
+            phase1_bar.progress(1.0, text="Phase 1 complete ✅")
+            phase2_bar.progress(1.0, text=f"Phase 2 complete ✅")
+            phase1_status.success(
+                f"✅ {len(successful_p1)}/{len(stocks)} stocks fully analyzed in "
+                f"{total_elapsed:.0f}s — ranked best → worst below."
+            )
+
+            # Combine: successful (sorted by score) + failed at the end
+            results = successful_p1 + failed_p1
+            is_ranked = True
+
+        # ---- MANUAL MODE: Single-phase ----
+        else:
+            progress_bar = st.progress(0, text="Starting analysis...")
+            status_text = st.empty()
+            status_text.info(f"🔄 Analyzing {len(stocks)} stock(s): {', '.join(stocks)}")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_ticker = {
+                    executor.submit(analyze_stock, ticker, investor_type, selected_model, include_contrarian): ticker
+                    for ticker in stocks
+                }
+                completed = 0
+                for future in concurrent.futures.as_completed(future_to_ticker):
+                    ticker = future_to_ticker[future]
+                    completed += 1
+                    progress_bar.progress(
+                        completed / len(stocks),
+                        text=f"Completed {ticker} ({completed}/{len(stocks)})"
+                    )
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as e:
+                        results.append({
+                            "ticker": ticker, "success": False, "error": str(e),
+                            "data": None, "analysis": None, "verdict": None,
+                            "contrarian_devil": None, "contrarian_skeptic": None
+                        })
+
+            elapsed = time.time() - start_time
+            progress_bar.progress(1.0, text=f"✅ Analysis complete! ({elapsed:.1f}s)")
+            successful = sum(1 for r in results if r["success"])
+            status_text.success(
+                f"✅ Completed: {successful}/{len(stocks)} stocks analyzed successfully in {elapsed:.1f}s"
+            )
+
+            # Preserve original entry order for manual mode
+            ticker_order = {t: i for i, t in enumerate(stocks)}
+            results.sort(key=lambda r: ticker_order.get(r["ticker"], 999))
+            is_ranked = False
+
+        # =========================================================================
+        # DISPLAY RESULTS
+        # =========================================================================
         st.markdown("---")
-        
-        # Summary table
-        st.subheader("📈 Summary")
+
+        successful_results = [r for r in results if r["success"]]
+        label = (
+            f"{len(successful_results)} of {len(results)} stocks analyzed — ranked best → worst"
+            if is_ranked
+            else f"{len(successful_results)} of {len(results)} stocks analyzed"
+        )
+        st.subheader(f"📈 Summary — {label}")
+
+        # Build summary table (already in display order)
         summary_data = []
         for r in results:
             if r["success"]:
                 analysis = r["analysis"]
-                score_emoji = "🟢" if analysis.score_percentage >= 70 else "🟡" if analysis.score_percentage >= 50 else "🔴"
+                score_pct = analysis.score_percentage
+                score_emoji = "🟢" if score_pct >= 70 else "🟡" if score_pct >= 50 else "🔴"
                 summary_data.append({
+                    "Rank": f"#{results.index(r) + 1}" if is_ranked else "",
                     "Ticker": r["ticker"],
                     "Company": r["data"].company_name[:30],
-                    "Score": f"{score_emoji} {analysis.passed_count}/{analysis.total_count} ({analysis.score_percentage:.0f}%)",
+                    "Score": f"{score_emoji} {analysis.passed_count}/{analysis.total_count} ({score_pct:.0f}%)",
                     "Price": f"${r['data'].current_price:.2f}",
-                    "P/E": f"{r['data'].pe_ratio:.1f}" if r['data'].pe_ratio else "N/A",
+                    "P/E": f"{r['data'].pe_ratio:.1f}" if r["data"].pe_ratio else "N/A",
                     "Recommendation": analysis.overall_recommendation.split(" - ")[0],
-                    "Analysis": "👇 Scroll Down"
                 })
             else:
                 summary_data.append({
+                    "Rank": "",
                     "Ticker": r["ticker"],
                     "Company": "Error",
                     "Score": "❌",
                     "Price": "-",
                     "P/E": "-",
-                    "Recommendation": r.get("error", "Unknown error")[:30]
+                    "Recommendation": (r.get("error") or "Unknown error")[:40],
                 })
-        
-        st.dataframe(
-            summary_data,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Analysis": st.column_config.TextColumn("View", width="small"),
-            }
-        )
-        
+
+        col_config = {"Recommendation": st.column_config.TextColumn("Recommendation", width="medium")}
+        if not is_ranked:
+            col_config["Rank"] = st.column_config.TextColumn("Rank", width="small")
+
+        st.dataframe(summary_data, use_container_width=True, hide_index=True, column_config=col_config)
+
         # Detailed results
         st.markdown("---")
-        st.subheader("📋 Detailed Analysis")
-        
+        if is_ranked:
+            st.subheader(f"📋 Detailed Analysis ({len(successful_results)} stocks, best → worst)")
+            st.caption("AI verdicts are collapsed by default. Click any stock's verdict to expand.")
+        else:
+            st.subheader("📋 Detailed Analysis")
+
         for i, result in enumerate(results, 1):
-            display_stock_result(result, i)
-        
-        # Ranking
-        successful_results = [r for r in results if r["success"]]
-        if len(successful_results) > 1:
+            display_stock_result(result, i, expand_verdict=not is_ranked)
+
+        # Ranking section (manual mode only — index mode is already ranked above)
+        if not is_ranked and len(successful_results) > 1:
             st.markdown("---")
-            st.subheader("🏆 Graham Ranking")
-            
+            st.subheader("🏆 Ranking")
             ranked = sorted(successful_results, key=lambda r: r["analysis"].score_percentage, reverse=True)
-            
             for i, r in enumerate(ranked, 1):
                 medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"#{i}"
                 analysis = r["analysis"]
                 st.markdown(
-                    f"**{medal} {r['ticker']}** ({r['data'].company_name}) - "
+                    f"**{medal} {r['ticker']}** ({r['data'].company_name}) — "
                     f"{analysis.score_percentage:.0f}% ({analysis.passed_count}/{analysis.total_count})"
                 )
 
