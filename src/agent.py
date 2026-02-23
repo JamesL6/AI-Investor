@@ -4,6 +4,7 @@ Generates narrative explanations using an LLM (supports Grok and Gemini).
 """
 
 import os
+import time
 from typing import Optional
 from src.analyzer import AnalysisResult, InvestorType
 from src.models import get_llm_response, AVAILABLE_MODELS
@@ -26,6 +27,26 @@ BUFFETT_SYSTEM_PROMPT = (
     "and long-term holding periods. You speak plainly, use folksy analogies, and reference "
     "your annual shareholder letters. You despise EBITDA ('bullshit earnings'), excessive debt, "
     "and management that doesn't think like owners. Be direct, wise, and occasionally witty."
+)
+
+# System prompt for Devil's Advocate contrarian persona
+CONTRARIAN_DEVIL_SYSTEM_PROMPT = (
+    "You are a contrarian investment analyst. Your job is to argue the exact opposite of the "
+    "prevailing verdict on a stock — if the analysis says BUY, you argue SELL; if it says SELL, "
+    "you argue BUY. Base your argument strictly on the quantitative data provided. Do not speculate "
+    "about news, macro events, or information not present in the numbers. Be concise, direct, and "
+    "analytical. No buzzwords. No hedging. Make the strongest possible opposing case in 3-5 short "
+    "paragraphs, covering past performance, present condition, and future trajectory implied by the data."
+)
+
+# System prompt for Skeptic contrarian persona
+CONTRARIAN_SKEPTIC_SYSTEM_PROMPT = (
+    "You are a rigorous skeptic reviewing an investment analysis. Your job is to find the holes, "
+    "the hidden risks, the assumptions that might be wrong, and the things the analysis glosses over. "
+    "You are not arguing for or against the investment — you are asking hard questions and exposing "
+    "weaknesses in the methodology and the data. Base your critique strictly on the quantitative data "
+    "provided. Do not speculate about news or events not present in the numbers. Be concise, precise, "
+    "and unsparing. Identify 3-5 specific concerns in short, direct paragraphs."
 )
 
 
@@ -65,6 +86,79 @@ def get_llm_verdict(
     except Exception as e:
         print(f"Warning: LLM call failed ({e}). Using fallback verdict.")
         return _generate_fallback_verdict(analysis)
+
+
+def get_contrarian_analysis(
+    analysis: AnalysisResult,
+    model_id: str = "grok-3-fast",
+    api_key: Optional[str] = None
+) -> dict:
+    """
+    Generate Devil's Advocate and Skeptic contrarian perspectives on an analysis.
+
+    Args:
+        analysis: The complete analysis result from GrahamValidator
+        model_id: Which model to use (from AVAILABLE_MODELS)
+        api_key: API key (uses env var if not provided)
+
+    Returns:
+        Dict with keys 'devil' (str) and 'skeptic' (str)
+    """
+    prompt = _build_contrarian_prompt(analysis)
+
+    result = {"devil": None, "skeptic": None}
+
+    try:
+        result["devil"] = get_llm_response(
+            model_id=model_id,
+            system_prompt=CONTRARIAN_DEVIL_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            api_key=api_key
+        )
+    except Exception as e:
+        result["devil"] = f"Devil's Advocate unavailable: {str(e)}"
+
+    time.sleep(0.5)
+
+    try:
+        result["skeptic"] = get_llm_response(
+            model_id=model_id,
+            system_prompt=CONTRARIAN_SKEPTIC_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            api_key=api_key
+        )
+    except Exception as e:
+        result["skeptic"] = f"Skeptic unavailable: {str(e)}"
+
+    return result
+
+
+def _build_contrarian_prompt(analysis: AnalysisResult) -> str:
+    """Build the shared prompt for both contrarian personas."""
+    if analysis.investor_type == InvestorType.DEFENSIVE:
+        strategy_name = "Defensive Investor"
+    elif analysis.investor_type == InvestorType.ENTERPRISING:
+        strategy_name = "Enterprising Investor"
+    else:
+        strategy_name = "Buffett Quality Investor"
+
+    criteria_details = []
+    for r in analysis.criteria_results:
+        status = "PASS" if r.passed else "FAIL"
+        criteria_details.append(
+            f"- {r.name}: {status} | Actual: {r.actual_value} | Required: {r.required_value}"
+        )
+    criteria_text = "\n".join(criteria_details)
+
+    return f"""STOCK: {analysis.ticker} ({analysis.company_name})
+STRATEGY: {strategy_name}
+SCORE: {analysis.passed_count}/{analysis.total_count} criteria passed ({analysis.score_percentage:.0f}%)
+CURRENT VERDICT: {analysis.overall_recommendation}
+
+CRITERIA RESULTS:
+{criteria_text}
+
+Use only the quantitative data above. Do not introduce outside information."""
 
 
 def _build_prompt(analysis: AnalysisResult) -> str:

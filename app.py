@@ -15,7 +15,7 @@ load_dotenv()
 
 from src.data import get_financial_data, FinancialData, format_currency
 from src.analyzer import GrahamValidator, InvestorType, AnalysisResult
-from src.agent import get_llm_verdict
+from src.agent import get_llm_verdict, get_contrarian_analysis
 from src.models import AVAILABLE_MODELS, get_model_choices
 
 # Page configuration
@@ -74,7 +74,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str) -> dict:
+def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str, include_contrarian: bool = False) -> dict:
     """
     Analyze a single stock and return results.
     Designed to run in parallel.
@@ -83,6 +83,7 @@ def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str) -> di
         ticker: Stock ticker symbol
         investor_type: Defensive or Enterprising
         model_id: AI model to use
+        include_contrarian: Whether to generate contrarian perspectives
     """
     import time
     
@@ -92,6 +93,8 @@ def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str) -> di
         "data": None,
         "analysis": None,
         "verdict": None,
+        "contrarian_devil": None,
+        "contrarian_skeptic": None,
         "error": None,
         "fetch_time": 0,
         "analysis_time": 0,
@@ -146,6 +149,18 @@ def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str) -> di
             result["verdict"] = f"AI verdict unavailable: {str(e)}"
             result["ai_time"] = time.time() - start_ai
             print(f"[{ticker}] AI Error: {str(e)}")
+        
+        if include_contrarian:
+            print(f"[{ticker}] Generating contrarian analysis...")
+            try:
+                contrarian = get_contrarian_analysis(analysis, model_id=model_id)
+                result["contrarian_devil"] = contrarian["devil"]
+                result["contrarian_skeptic"] = contrarian["skeptic"]
+                print(f"[{ticker}] Contrarian analysis complete")
+            except Exception as e:
+                result["contrarian_devil"] = f"Devil's Advocate unavailable: {str(e)}"
+                result["contrarian_skeptic"] = f"Skeptic unavailable: {str(e)}"
+                print(f"[{ticker}] Contrarian Error: {str(e)}")
         
         result["success"] = True
         total_time = result["fetch_time"] + result["analysis_time"] + result["ai_time"]
@@ -213,13 +228,22 @@ def display_stock_result(result: dict, index: int):
             st.markdown(f"**{status} {cr.name}**")
             st.markdown(f"- Actual: `{cr.actual_value}`")
             st.markdown(f"- Required: `{cr.required_value}`")
-            st.caption(cr.explanation)
+            st.markdown(f"_{cr.explanation}_")
             st.divider()
     
     # AI Verdict - dynamic title based on investor type
     analyst_name = "Warren Buffett" if analysis.investor_type == InvestorType.BUFFETT else "Benjamin Graham"
     with st.expander(f"📜 {analyst_name}'s Verdict", expanded=True):
         st.markdown(result["verdict"])
+    
+    # Contrarian expanders (only shown if contrarian analysis was generated)
+    if result.get("contrarian_devil"):
+        with st.expander("😈 Contrarian: Devil's Advocate", expanded=False):
+            st.markdown(result["contrarian_devil"])
+    
+    if result.get("contrarian_skeptic"):
+        with st.expander("🧐 Contrarian: The Skeptic", expanded=False):
+            st.markdown(result["contrarian_skeptic"])
     
     # Recommendation badge
     if analysis.score_percentage >= 70:
@@ -295,7 +319,7 @@ def main():
             - 33% earnings growth (10yr)
             - P/E < 15 AND P/B < 1.5
             """)
-        else:
+        elif investor_type == InvestorType.ENTERPRISING:
             st.info("""
             **Enterprising Investor** (6 criteria):
             - Current Ratio > 1.5
@@ -305,6 +329,25 @@ def main():
             - Earnings growth (5yr)
             - Price < 120% of Net Tangible Assets
             """)
+        else:  # BUFFETT
+            st.info("""
+            **Buffett Quality Investor** (10 criteria):
+            - **Business:** Gross Margin > 40%, ROIC > 15%, Revenue CAGR > 5%
+            - **Management:** ROE > 15% (not leveraged), Low SG&A
+            - **Financial:** Net Margin > 20%, Positive Owner Earnings, Low Debt, Interest Coverage > 5x
+            - **Valuation:** P/E < 15 OR FCF Yield > 4.5%
+            """)
+        
+        st.divider()
+        
+        # Contrarian analysis option
+        st.subheader("Contrarian Analysis")
+        include_contrarian = st.checkbox(
+            "Include Contrarian Analysis",
+            value=False,
+            help="Adds 😈 Devil's Advocate and 🧐 Skeptic perspectives per stock. "
+                 "Generates 2 extra AI calls per stock — slower but deeper."
+        )
         
         st.divider()
         
@@ -349,7 +392,7 @@ def main():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         analyze_button = st.button(
-            "🚀 Run Graham Analysis",
+            "🚀 Run Analysis",
             type="primary",
             disabled=len(stocks) == 0,
             use_container_width=True
@@ -374,7 +417,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             future_to_ticker = {
-                executor.submit(analyze_stock, ticker, investor_type, selected_model): ticker 
+                executor.submit(analyze_stock, ticker, investor_type, selected_model, include_contrarian): ticker 
                 for ticker in stocks
             }
             
@@ -431,7 +474,8 @@ def main():
                     "Score": f"{score_emoji} {analysis.passed_count}/{analysis.total_count} ({analysis.score_percentage:.0f}%)",
                     "Price": f"${r['data'].current_price:.2f}",
                     "P/E": f"{r['data'].pe_ratio:.1f}" if r['data'].pe_ratio else "N/A",
-                    "Recommendation": analysis.overall_recommendation.split(" - ")[0]
+                    "Recommendation": analysis.overall_recommendation.split(" - ")[0],
+                    "Analysis": "👇 Scroll Down"
                 })
             else:
                 summary_data.append({
@@ -443,7 +487,14 @@ def main():
                     "Recommendation": r.get("error", "Unknown error")[:30]
                 })
         
-        st.dataframe(summary_data, use_container_width=True, hide_index=True)
+        st.dataframe(
+            summary_data,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Analysis": st.column_config.TextColumn("View", width="small"),
+            }
+        )
         
         # Detailed results
         st.markdown("---")
