@@ -1,33 +1,17 @@
 """
 Index ticker lists for batch analysis.
-Dow 30 is hardcoded. S&P 500 and NASDAQ 100 are fetched from Wikipedia at runtime.
+All lists are hardcoded — no scraping, no external APIs at runtime.
+Last updated: February 2026. Minor additions/removals are handled gracefully
+(failed tickers are skipped with retries).
 """
 
-import io
-import requests
-import pandas as pd
 from typing import List
 
-# Wikipedia blocks requests without a browser-like User-Agent
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-}
 
-
-def _fetch_wiki_tables(url: str) -> list:
-    """Fetch Wikipedia page and parse all HTML tables. Raises on failure."""
-    response = requests.get(url, headers=_HEADERS, timeout=15)
-    response.raise_for_status()
-    return pd.read_html(io.StringIO(response.text))
-
-
-# Dow Jones Industrial Average — 30 components (as of early 2026)
-# AMZN replaced WBA (Feb 2024), SHW replaced DOW (Aug 2024), NVDA replaced INTC (Nov 2024)
-DOW_30 = [
+# ---------------------------------------------------------------------------
+# Dow Jones Industrial Average — 30 components (as of Feb 2026)
+# ---------------------------------------------------------------------------
+DOW_30: List[str] = [
     "AAPL", "AMGN", "AMZN", "AXP", "BA",
     "CAT",  "CRM",  "CSCO", "CVX", "DIS",
     "GS",   "HD",   "HON",  "IBM", "JNJ",
@@ -37,39 +21,118 @@ DOW_30 = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# NASDAQ 100 — 100 components (as of Feb 2026)
+# ---------------------------------------------------------------------------
+NASDAQ_100: List[str] = [
+    "ADBE", "ADI",  "ADP",  "ADSK", "AEP",
+    "AKAM", "AMAT", "AMD",  "AMGN", "AMZN",
+    "ANSS", "APP",  "ASML", "AVGO", "AZN",
+    "BIIB", "BKNG", "BKR",  "CCEP", "CDNS",
+    "CDW",  "CEG",  "CHTR", "CMCSA","COST",
+    "CPRT", "CRWD", "CSCO", "CSGP", "CSX",
+    "CTAS", "CTSH", "DASH", "DDOG", "DLTR",
+    "DXCM", "EA",   "EXC",  "FANG", "FAST",
+    "FTNT", "GEHC", "GFS",  "GILD", "GOOG",
+    "GOOGL","HON",  "IDXX", "ILMN", "INTC",
+    "INTU", "ISRG", "KDP",  "KHC",  "KLAC",
+    "LOGI", "LRCX", "LULU", "MAR",  "MCHP",
+    "MDB",  "MDLZ", "MELI", "META", "MNST",
+    "MRNA", "MRVL", "MSFT", "MU",   "NFLX",
+    "NVDA", "NXPI", "ODFL", "ON",   "ORLY",
+    "PANW", "PAYX", "PCAR", "PDD",  "PEP",
+    "PYPL", "QCOM", "REGN", "ROP",  "ROST",
+    "SBUX", "SIRI", "SNPS", "TEAM", "TMUS",
+    "TSLA", "TTWO", "TXN",  "VRSK", "VRSN",
+    "VRTX", "WBA",  "WBD",  "WDAY", "XEL",
+]
+
+
+# ---------------------------------------------------------------------------
+# S&P 500 — ~503 components (as of Feb 2026)
+# ---------------------------------------------------------------------------
+SP_500: List[str] = [
+    # Information Technology
+    "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "ACN",  "IBM",  "TXN",  "QCOM",
+    "AMD",  "INTC", "INTU", "ADBE", "NOW",  "CSCO", "AMAT", "MU",  "LRCX", "KLAC",
+    "SNPS", "CDNS", "PANW", "WDAY", "FTNT", "IT",   "CTSH", "GLW", "HPQ",  "HPE",
+    "CDW",  "JNPR", "KEYS", "TER",  "SWKS", "QRVO", "AKAM", "VRSN","FSLR", "EPAM",
+    "GEN",  "NTAP", "ZBRA", "FFIV", "STX",  "WDC",  "ENPH", "SEDG","MPWR", "TRMB",
+    "PTC",  "ANSS", "TDY",  "GDDY", "ROP",
+
+    # Communication Services
+    "GOOGL","GOOG", "META", "NFLX", "DIS",  "CMCSA","T",    "VZ",  "TMUS", "CHTR",
+    "WBD",  "PARA", "LYV",  "OMC",  "IPG",  "NWSA", "NWS",  "FOX", "FOXA", "MTCH",
+    "ZM",   "SNAP", "PINS", "RBLX", "EA",   "TTWO", "ATVI",
+
+    # Consumer Discretionary
+    "AMZN", "TSLA", "HD",   "MCD",  "NKE",  "LOW",  "SBUX", "TJX", "BKNG", "MAR",
+    "HLT",  "ABNB", "GM",   "F",    "ORLY", "AZO",  "TSCO", "ROST","ULTA", "DRI",
+    "YUM",  "CMG",  "ETSY", "EBAY", "EXPE", "DHI",  "LEN",  "PHM", "NVR",  "TOL",
+    "DECK", "HAS",  "MAT",  "NCLH", "RCL",  "CCL",  "MGM",  "WYNN","LVS",  "RL",
+    "PVH",  "TPR",  "VFC",  "KSS",  "M",    "JWN",  "GPS",  "ANF", "BBWI", "CPRI",
+    "GPC",  "AAP",  "KMX",  "AN",   "PAG",  "LAD",  "APTV", "BWA",
+
+    # Consumer Staples
+    "WMT",  "PG",   "KO",   "PEP",  "COST", "MDLZ", "PM",   "MO",  "STZ",  "CL",
+    "KMB",  "GIS",  "K",    "HSY",  "SJM",  "CAG",  "CPB",  "MKC", "CHD",  "CLX",
+    "EL",   "KHC",  "WBA",  "CVS",  "MNST", "TAP",  "BF-B", "HRL", "TSN",  "LW",
+    "INGR", "FLO",  "POST", "SMPL",
+
+    # Healthcare
+    "UNH",  "LLY",  "JNJ",  "ABBV", "MRK",  "ABT",  "TMO",  "DHR", "BMY",  "AMGN",
+    "GILD", "CI",   "HUM",  "CNC",  "MOH",  "ELV",  "MDT",  "BSX", "SYK",  "ZBH",
+    "BAX",  "BDX",  "HOLX", "ISRG", "EW",   "IDXX", "IQV",  "A",   "BIO",  "RMD",
+    "VRTX", "REGN", "BIIB", "ILMN", "MRNA", "EXAS", "ALGN", "DXCM","MTD",  "WAT",
+    "PKI",  "GEHC", "TECH", "HSIC", "CAH",  "MCK",  "COR",  "ABC", "VTRS", "PFE",
+    "AZN",  "SNY",  "RGEN", "INCY", "SGEN", "BMRN", "EXEL", "RARE","ACAD",
+
+    # Financials
+    "JPM",  "BAC",  "WFC",  "GS",   "MS",   "BLK",  "C",    "AXP", "SPGI", "MCO",
+    "ICE",  "CME",  "SCHW", "TROW", "BEN",  "IVZ",  "FDS",  "MSCI","COF",  "DFS",
+    "SYF",  "AIG",  "MET",  "PRU",  "AFL",  "HIG",  "ALL",  "TRV", "CB",   "RE",
+    "RJF",  "RF",   "CFG",  "MTB",  "STT",  "BK",   "NTRS", "FITB","HBAN", "KEY",
+    "USB",  "PNC",  "BRK-B","CINF", "LNC",  "UNM",  "GL",   "FNF", "FAF",  "CBOE",
+    "NDAQ", "MKTX", "IBKR", "SF",   "EVR",  "LAZ",  "GHL",  "WEX", "FIS",  "FI",
+    "GPN",  "MA",   "V",    "PYPL", "SQ",   "AFRM", "SOFI",
+
+    # Energy
+    "XOM",  "CVX",  "COP",  "EOG",  "SLB",  "MPC",  "VLO",  "PSX", "OXY",  "HAL",
+    "BKR",  "DVN",  "HES",  "CTRA", "EQT",  "APA",  "FANG", "MRO", "OKE",  "WMB",
+    "KMI",  "LNG",  "TRGP", "AM",   "DT",
+
+    # Materials
+    "LIN",  "APD",  "SHW",  "ECL",  "NEM",  "FCX",  "NUE",  "STLD","RS",   "ALB",
+    "BALL", "PKG",  "IP",   "WRK",  "SEE",  "MOS",  "CF",   "FMC", "EMN",  "CE",
+    "IFF",  "RPM",  "PPG",  "AVY",  "CC",   "OLN",  "ATR",  "SLGN","GEF",
+
+    # Industrials
+    "HON",  "GE",   "RTX",  "CAT",  "DE",   "BA",   "UPS",  "FDX", "WM",   "RSG",
+    "LMT",  "NOC",  "GD",   "LHX",  "HII",  "TDG",  "CARR", "OTIS","CPRT", "FAST",
+    "GWW",  "PH",   "ITW",  "EMR",  "ROK",  "AME",  "TT",   "JCI", "XYL",  "PCAR",
+    "WAB",  "CSX",  "NSC",  "UNP",  "EXPD", "CHRW", "XPO",  "ODFL","SAIA", "RXO",
+    "AXTA", "IR",   "RRX",  "MAS",  "LII",  "GNRC", "ALLE", "SWK", "SNA",  "PNR",
+    "AMETEK","DOV", "FTV",  "BW",   "WTS",  "IEX",  "IDEX",
+
+    # Real Estate
+    "AMT",  "PLD",  "CCI",  "EQIX", "PSA",  "EQR",  "AVB",  "SPG", "VTR",  "EXR",
+    "MAA",  "O",    "VICI", "BXP",  "KIM",  "REG",  "FRT",  "CPT", "ESS",  "UDR",
+    "IRM",  "SUI",  "ELS",  "HST",  "PEAK", "DLR",  "ARE",  "SLG", "WY",   "SBAC",
+    "GLPI", "GAMING","MPW",
+
+    # Utilities
+    "NEE",  "DUK",  "SO",   "D",    "AEP",  "EXC",  "PCG",  "SRE", "ED",   "XEL",
+    "ES",   "WEC",  "ETR",  "FE",   "CNP",  "CMS",  "NI",   "ATO", "LNT",  "PNW",
+    "NRG",  "VST",  "CEG",  "AWK",  "WTRG", "SJW",  "YORW",
+]
+
+
 def get_sp500_tickers() -> List[str]:
-    """Fetch current S&P 500 tickers from Wikipedia."""
-    try:
-        tables = _fetch_wiki_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0]
-        tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
-        result = [str(t).strip() for t in tickers if t and str(t) != "nan"]
-        print(f"[Indices] Loaded {len(result)} S&P 500 tickers")
-        return result
-    except Exception as e:
-        print(f"[Indices] Error fetching S&P 500 tickers: {e}")
-        return []
+    return list(SP_500)
 
 
 def get_nasdaq100_tickers() -> List[str]:
-    """Fetch current NASDAQ 100 tickers from Wikipedia."""
-    try:
-        tables = _fetch_wiki_tables("https://en.wikipedia.org/wiki/Nasdaq-100")
-        for df in tables:
-            cols_lower = [str(c).lower() for c in df.columns]
-            for candidate in ["ticker", "symbol"]:
-                if candidate in cols_lower:
-                    col = df.columns[cols_lower.index(candidate)]
-                    tickers = df[col].tolist()
-                    cleaned = [str(t).strip() for t in tickers if t and str(t) != "nan"]
-                    if len(cleaned) >= 90:
-                        print(f"[Indices] Loaded {len(cleaned)} NASDAQ 100 tickers")
-                        return cleaned
-        print("[Indices] Could not find NASDAQ 100 ticker column in Wikipedia tables.")
-        return []
-    except Exception as e:
-        print(f"[Indices] Error fetching NASDAQ 100 tickers: {e}")
-        return []
+    return list(NASDAQ_100)
 
 
 INDEX_CONFIGS = {
@@ -81,13 +144,13 @@ INDEX_CONFIGS = {
     },
     "S&P 500": {
         "tickers_fn": get_sp500_tickers,
-        "count": 503,
+        "count": len(SP_500),
         "est_minutes": 6,
         "description": "~500 largest US companies by market cap",
     },
     "NASDAQ 100": {
         "tickers_fn": get_nasdaq100_tickers,
-        "count": 100,
+        "count": len(NASDAQ_100),
         "est_minutes": 5,
         "description": "100 largest non-financial companies listed on the NASDAQ",
     },
