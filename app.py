@@ -179,7 +179,7 @@ def analyze_stock(ticker: str, investor_type: InvestorType, model_id: str, inclu
 def analyze_stock_no_ai(ticker: str, investor_type: InvestorType) -> dict:
     """
     Phase 1 of index mode: fetch data and score criteria only — no AI call.
-    Fast enough to run on hundreds of stocks in parallel.
+    Retries up to 3 times with backoff to handle Yahoo Finance rate limiting.
     """
     import time
 
@@ -197,30 +197,39 @@ def analyze_stock_no_ai(ticker: str, investor_type: InvestorType) -> dict:
         "ai_time": 0,
     }
 
-    try:
-        start_fetch = time.time()
-        data = get_financial_data(ticker)
-        result["fetch_time"] = time.time() - start_fetch
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                wait = attempt * 3  # 3s, 6s backoff
+                print(f"[{ticker}] Retry {attempt}/{max_retries - 1} after {wait}s (rate limit)...")
+                time.sleep(wait)
 
-        if not data or data.total_revenue <= 0 or data.current_price <= 0:
-            result["error"] = f"Could not fetch valid data for {ticker}"
+            start_fetch = time.time()
+            data = get_financial_data(ticker)
+            result["fetch_time"] = time.time() - start_fetch
+
+            if not data or data.total_revenue <= 0 or data.current_price <= 0:
+                result["error"] = f"Could not fetch valid data for {ticker}"
+                continue  # retry
+
+            result["data"] = data
+
+            start_analysis = time.time()
+            validator = GrahamValidator(data)
+            analysis = validator.analyze(investor_type)
+            result["analysis"] = analysis
+            result["analysis_time"] = time.time() - start_analysis
+            result["success"] = True
+
+            print(f"[{ticker}] Score: {analysis.passed_count}/{analysis.total_count} ({analysis.score_percentage:.0f}%)")
             return result
 
-        result["data"] = data
+        except Exception as e:
+            result["error"] = f"Error analyzing {ticker}: {str(e)}"
+            print(f"[{ticker}] Attempt {attempt + 1} error: {str(e)}")
 
-        start_analysis = time.time()
-        validator = GrahamValidator(data)
-        analysis = validator.analyze(investor_type)
-        result["analysis"] = analysis
-        result["analysis_time"] = time.time() - start_analysis
-        result["success"] = True
-
-        print(f"[{ticker}] Score: {analysis.passed_count}/{analysis.total_count} ({analysis.score_percentage:.0f}%)")
-
-    except Exception as e:
-        result["error"] = f"Error analyzing {ticker}: {str(e)}"
-        print(f"[{ticker}] Error: {str(e)}")
-
+    print(f"[{ticker}] Failed after {max_retries} attempts: {result['error']}")
     return result
 
 
@@ -495,7 +504,9 @@ def main():
             phase1_results = []
             phase1_start = time.time()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Cap Phase 1 workers at 3 — Yahoo Finance rate-limits aggressive parallel fetching
+            phase1_workers = min(max_workers, 3)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=phase1_workers) as executor:
                 futures = {
                     executor.submit(analyze_stock_no_ai, ticker, investor_type): ticker
                     for ticker in stocks
