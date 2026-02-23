@@ -148,13 +148,20 @@ def get_financial_data(ticker_symbol: str) -> Optional[FinancialData]:
         total_current_liabilities = _safe_get_value(balance_sheet, 'Current Liabilities')
         total_long_term_debt = _safe_get_value(balance_sheet, 'Long Term Debt')
         total_debt = _safe_get_value(balance_sheet, 'Total Debt')
-        total_stockholder_equity = _safe_get_value(balance_sheet, 'Stockholders Equity')
-        intangible_assets = _safe_get_value(balance_sheet, 'Intangible Assets')
-        
-        # Calculate net tangible assets
+        total_stockholder_equity = (
+            _safe_get_value(balance_sheet, 'Stockholders Equity') or
+            _safe_get_value(balance_sheet, 'Common Stock Equity')
+        )
         total_assets = _safe_get_value(balance_sheet, 'Total Assets')
         total_liabilities = _safe_get_value(balance_sheet, 'Total Liabilities Net Minority Interest')
-        net_tangible_assets = total_assets - intangible_assets - total_liabilities
+
+        # Use yfinance's pre-calculated Net Tangible Assets (assets minus goodwill/intangibles minus liabilities)
+        net_tangible_assets = _safe_get_value(balance_sheet, 'Net Tangible Assets')
+        if net_tangible_assets == 0:
+            # Fallback: compute manually (less accurate — intangibles may not be captured)
+            intangible_assets = _safe_get_value(balance_sheet, 'Intangible Assets')
+            net_tangible_assets = total_assets - intangible_assets - total_liabilities
+        intangible_assets = total_assets - total_liabilities - net_tangible_assets
         
         # Book value per share
         shares_outstanding = info.get('sharesOutstanding', 1)
@@ -166,7 +173,7 @@ def get_financial_data(ticker_symbol: str) -> Optional[FinancialData]:
         earnings_per_share = info.get('trailingEps', 0)
         gross_profit = _safe_get_value(income_stmt, 'Gross Profit')
         operating_income = _safe_get_value(income_stmt, 'Operating Income')  # EBIT
-        interest_expense = _safe_get_value(income_stmt, 'Interest Expense')
+        interest_expense = _safe_get_interest_expense(income_stmt)
         depreciation_amortization = _safe_get_value(income_stmt, 'Depreciation And Amortization')
         sga_expense = _safe_get_value(income_stmt, 'Selling General And Administration')
         
@@ -185,18 +192,22 @@ def get_financial_data(ticker_symbol: str) -> Optional[FinancialData]:
         
         pe_ratio = info.get('trailingPE', 0) or 0
         pb_ratio = info.get('priceToBook', 0) or 0
-        dividend_yield = info.get('dividendYield', 0) or 0
+        # trailingAnnualDividendYield is a proper decimal (e.g., 0.0039 = 0.39%)
+        # dividendYield in yfinance is a scaled value (0.39 = 0.39%) — do NOT use it
+        dividend_yield = info.get('trailingAnnualDividendYield', 0) or 0
         
         # Calculate ratios - Buffett
         # ROE = Net Income / Shareholders Equity
         roe = (net_income / total_stockholder_equity * 100) if total_stockholder_equity > 0 else 0
         
         # ROIC = EBIT * (1 - Tax Rate) / Invested Capital
-        # Invested Capital = Total Assets - Current Liabilities - Cash
-        cash = _safe_get_value(balance_sheet, 'Cash And Cash Equivalents')
-        invested_capital = total_assets - total_current_liabilities - cash
         tax_rate = 0.21  # Approximate corporate tax rate
         nopat = operating_income * (1 - tax_rate) if operating_income > 0 else 0
+        # Use yfinance's Invested Capital directly if available, else calculate
+        invested_capital = _safe_get_value(balance_sheet, 'Invested Capital')
+        if invested_capital == 0:
+            cash = _safe_get_value(balance_sheet, 'Cash And Cash Equivalents')
+            invested_capital = total_assets - total_current_liabilities - cash
         roic = (nopat / invested_capital * 100) if invested_capital > 0 else 0
         
         # Gross Margin = Gross Profit / Revenue
@@ -304,6 +315,20 @@ def _safe_get_value(df: pd.DataFrame, row_name: str, column_idx: int = 0) -> flo
         return 0.0
     except (IndexError, KeyError):
         return 0.0
+
+
+def _safe_get_interest_expense(income_stmt: pd.DataFrame) -> float:
+    """
+    Get interest expense, trying multiple field names and column indices.
+    yfinance sometimes has NaN for the most recent year(s) for this field.
+    """
+    field_names = ['Interest Expense', 'Interest Expense Non Operating']
+    for col_idx in range(min(4, len(income_stmt.columns))):
+        for field in field_names:
+            value = abs(_safe_get_value(income_stmt, field, col_idx))
+            if value > 0:
+                return value
+    return 0.0
 
 
 def _get_historical_values(df: pd.DataFrame, row_name: str) -> List[float]:
