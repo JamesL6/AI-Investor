@@ -3,8 +3,26 @@ Index ticker lists for batch analysis.
 Dow 30 is hardcoded. S&P 500 and NASDAQ 100 are fetched from Wikipedia at runtime.
 """
 
+import io
+import requests
 import pandas as pd
 from typing import List
+
+# Wikipedia blocks requests without a browser-like User-Agent
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
+
+def _fetch_wiki_tables(url: str) -> list:
+    """Fetch Wikipedia page and parse all HTML tables. Raises on failure."""
+    response = requests.get(url, headers=_HEADERS, timeout=15)
+    response.raise_for_status()
+    return pd.read_html(io.StringIO(response.text))
 
 
 # Dow Jones Industrial Average — 30 components (as of early 2026)
@@ -22,10 +40,12 @@ DOW_30 = [
 def get_sp500_tickers() -> List[str]:
     """Fetch current S&P 500 tickers from Wikipedia."""
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        tables = _fetch_wiki_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
         df = tables[0]
         tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
-        return [str(t).strip() for t in tickers if t and str(t) != "nan"]
+        result = [str(t).strip() for t in tickers if t and str(t) != "nan"]
+        print(f"[Indices] Loaded {len(result)} S&P 500 tickers")
+        return result
     except Exception as e:
         print(f"[Indices] Error fetching S&P 500 tickers: {e}")
         return []
@@ -34,7 +54,7 @@ def get_sp500_tickers() -> List[str]:
 def get_nasdaq100_tickers() -> List[str]:
     """Fetch current NASDAQ 100 tickers from Wikipedia."""
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        tables = _fetch_wiki_tables("https://en.wikipedia.org/wiki/Nasdaq-100")
         for df in tables:
             cols_lower = [str(c).lower() for c in df.columns]
             for candidate in ["ticker", "symbol"]:
@@ -43,6 +63,7 @@ def get_nasdaq100_tickers() -> List[str]:
                     tickers = df[col].tolist()
                     cleaned = [str(t).strip() for t in tickers if t and str(t) != "nan"]
                     if len(cleaned) >= 90:
+                        print(f"[Indices] Loaded {len(cleaned)} NASDAQ 100 tickers")
                         return cleaned
         print("[Indices] Could not find NASDAQ 100 ticker column in Wikipedia tables.")
         return []
