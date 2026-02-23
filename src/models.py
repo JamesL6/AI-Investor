@@ -26,21 +26,27 @@ class ModelConfig:
 
 # Available models
 AVAILABLE_MODELS = {
-    "grok-4.1-fast-thinking": ModelConfig(
+    "grok-3": ModelConfig(
         provider=ModelProvider.GROK,
-        model_name="grok-beta-4.1-fast-thinking",  # May need adjustment based on actual API model name
-        display_name="Grok 4.1 Fast Thinking",
+        model_name="grok-3",
+        display_name="Grok 3",
         api_key_env="XAI_API_KEY",
         base_url="https://api.x.ai/v1"
     ),
-    # Gemini 3 will be added when available
-    # "gemini-3": ModelConfig(
-    #     provider=ModelProvider.GEMINI,
-    #     model_name="gemini-3",
-    #     display_name="Gemini 3",
-    #     api_key_env="GOOGLE_API_KEY",
-    #     base_url=None
-    # ),
+    "grok-3-mini": ModelConfig(
+        provider=ModelProvider.GROK,
+        model_name="grok-3-mini",
+        display_name="Grok 3 Mini (Faster)",
+        api_key_env="XAI_API_KEY",
+        base_url="https://api.x.ai/v1"
+    ),
+    "grok-4-1-fast": ModelConfig(
+        provider=ModelProvider.GROK,
+        model_name="grok-4-1-fast-non-reasoning",
+        display_name="Grok 4.1 Fast",
+        api_key_env="XAI_API_KEY",
+        base_url="https://api.x.ai/v1"
+    ),
 }
 
 

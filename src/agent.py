@@ -52,7 +52,7 @@ CONTRARIAN_SKEPTIC_SYSTEM_PROMPT = (
 
 def get_llm_verdict(
     analysis: AnalysisResult, 
-    model_id: str = "grok-3-fast",
+    model_id: str = "grok-3",
     api_key: Optional[str] = None
 ) -> str:
     """
@@ -90,7 +90,7 @@ def get_llm_verdict(
 
 def get_contrarian_analysis(
     analysis: AnalysisResult,
-    model_id: str = "grok-3-fast",
+    model_id: str = "grok-3",
     api_key: Optional[str] = None
 ) -> dict:
     """
