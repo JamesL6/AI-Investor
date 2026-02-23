@@ -453,7 +453,11 @@ def main():
         selected_index_name = st.selectbox(
             "Choose Index",
             list(INDEX_CONFIGS.keys()),
-            help="Tickers are fetched automatically from Wikipedia when you run the analysis."
+            help=(
+                "Ticker lists are hardcoded in the app (last updated Feb 2026). "
+                "Index composition changes a few times per year — any stale or "
+                "unrecognized tickers are automatically retried then skipped."
+            )
         )
         config = INDEX_CONFIGS[selected_index_name]
         est_phase1 = max(1, config["est_minutes"] // 2)
