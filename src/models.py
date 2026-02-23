@@ -26,24 +26,24 @@ class ModelConfig:
 
 # Available models
 AVAILABLE_MODELS = {
+    "grok-4-1-fast-reasoning": ModelConfig(
+        provider=ModelProvider.GROK,
+        model_name="grok-4-1-fast-reasoning",
+        display_name="Grok 4.1 Fast Thinking",
+        api_key_env="XAI_API_KEY",
+        base_url="https://api.x.ai/v1"
+    ),
+    "grok-4-1-fast-non-reasoning": ModelConfig(
+        provider=ModelProvider.GROK,
+        model_name="grok-4-1-fast-non-reasoning",
+        display_name="Grok 4.1 Fast",
+        api_key_env="XAI_API_KEY",
+        base_url="https://api.x.ai/v1"
+    ),
     "grok-3": ModelConfig(
         provider=ModelProvider.GROK,
         model_name="grok-3",
         display_name="Grok 3",
-        api_key_env="XAI_API_KEY",
-        base_url="https://api.x.ai/v1"
-    ),
-    "grok-3-mini": ModelConfig(
-        provider=ModelProvider.GROK,
-        model_name="grok-3-mini",
-        display_name="Grok 3 Mini (Faster)",
-        api_key_env="XAI_API_KEY",
-        base_url="https://api.x.ai/v1"
-    ),
-    "grok-4-1-fast": ModelConfig(
-        provider=ModelProvider.GROK,
-        model_name="grok-4-1-fast-non-reasoning",
-        display_name="Grok 4.1 Fast",
         api_key_env="XAI_API_KEY",
         base_url="https://api.x.ai/v1"
     ),
